@@ -1,6 +1,6 @@
 /* NERD */
 :root {
-  --bg: #0a0a0a;
+  --bg: #000000;
   --bg-card: #111;
   --text: #e0e0e0;
   --text-dim: #666;
@@ -103,10 +103,17 @@ main {
 }
 
 .hero h1 {
-  font-size: 2.5rem;
+  font-size: 4rem;
   font-weight: 300;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.15em;
   margin-bottom: 0.5rem;
+}
+
+.hero-logo {
+  max-width: 500px;
+  width: 80%;
+  height: auto;
+  margin-bottom: 1rem;
 }
 
 .hero .tagline {
@@ -575,6 +582,10 @@ footer a:hover {
   }
 
   .hero h1 {
-    font-size: 2rem;
+    font-size: 2.5rem;
+  }
+
+  .hero-logo {
+    max-width: 300px;
   }
 }

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.png" alt="NERD" width="300">
+  <img src="https://raw.githubusercontent.com/Nerd-Lang/nerd-lang-core/main/docs/site/images/nerd-dark.png" alt="NERD" width="400">
 </p>
 
 <h3 align="center">No Effort Required, Done</h3>
