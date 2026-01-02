@@ -12,8 +12,13 @@ SRC_DIR = src
 BUILD_DIR = build
 BIN = nerd
 
-SOURCES = $(wildcard $(SRC_DIR)/*.c)
+# Exclude runtime files from compiler build
+SOURCES = $(filter-out $(SRC_DIR)/nerd_http.c, $(wildcard $(SRC_DIR)/*.c))
 OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SOURCES))
+
+# Runtime library
+RUNTIME_SRC = $(SRC_DIR)/nerd_http.c
+RUNTIME_OBJ = $(BUILD_DIR)/nerd_http.o
 
 .PHONY: all clean debug test
 
@@ -53,11 +58,24 @@ test: $(BIN)
 	@echo ""
 	@echo "=== Tests Complete ==="
 
+# Build HTTP runtime library
+runtime: $(BUILD_DIR) $(RUNTIME_OBJ)
+	@echo "Built HTTP runtime: $(RUNTIME_OBJ)"
+
+$(RUNTIME_OBJ): $(RUNTIME_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 # Compile and link to native executable (requires clang/LLVM)
 native: $(BIN)
 	./$(BIN) compile ../examples/math.nerd -o math.ll
 	clang math.ll -o math_native -lm
 	@echo "Built native executable: math_native"
+
+# Compile with HTTP support (requires libcurl)
+native-http: $(BIN) runtime
+	./$(BIN) compile ../examples/http_test.nerd -o http_test.ll
+	clang http_test.ll $(RUNTIME_OBJ) -lcurl -o http_test
+	@echo "Built HTTP-enabled executable: http_test"
 
 # Install to /usr/local/bin
 install: $(BIN)

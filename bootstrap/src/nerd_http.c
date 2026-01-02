@@ -1,0 +1,100 @@
+/*
+ * NERD HTTP Runtime - libcurl wrapper
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <curl/curl.h>
+
+// Response buffer
+typedef struct {
+    char *data;
+    size_t size;
+} ResponseBuffer;
+
+// Write callback for curl
+static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    ResponseBuffer *buf = (ResponseBuffer *)userp;
+
+    char *ptr = realloc(buf->data, buf->size + realsize + 1);
+    if (!ptr) return 0;
+
+    buf->data = ptr;
+    memcpy(&(buf->data[buf->size]), contents, realsize);
+    buf->size += realsize;
+    buf->data[buf->size] = 0;
+
+    return realsize;
+}
+
+// HTTP GET - returns response body as string
+char* nerd_http_get(const char *url) {
+    CURL *curl = curl_easy_init();
+    if (!curl) return NULL;
+
+    ResponseBuffer buf = {0};
+    buf.data = malloc(1);
+    buf.size = 0;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&buf);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        free(buf.data);
+        return NULL;
+    }
+
+    return buf.data;
+}
+
+// HTTP POST - returns response body as string
+char* nerd_http_post(const char *url, const char *body) {
+    CURL *curl = curl_easy_init();
+    if (!curl) return NULL;
+
+    ResponseBuffer buf = {0};
+    buf.data = malloc(1);
+    buf.size = 0;
+
+    // Set Content-Type to JSON if body looks like JSON
+    struct curl_slist *headers = NULL;
+    if (body && (body[0] == '{' || body[0] == '[')) {
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&buf);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    if (headers) {
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    }
+
+    CURLcode res = curl_easy_perform(curl);
+
+    if (headers) curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        free(buf.data);
+        return NULL;
+    }
+
+    return buf.data;
+}
+
+// Free response
+void nerd_http_free(char *response) {
+    free(response);
+}
+

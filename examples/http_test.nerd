@@ -1,0 +1,11 @@
+-- HTTP examples in NERD
+
+fn main
+out "=== HTTP GET ==="
+http get "https://httpbin.org/get"
+
+out "=== HTTP POST ==="
+http post "https://httpbin.org/post" "{\"name\":\"nerd\"}"
+
+out "=== Done ==="
+

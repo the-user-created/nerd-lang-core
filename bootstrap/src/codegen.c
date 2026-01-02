@@ -69,6 +69,21 @@ static void codegen_free(CodeGen *cg) {
 }
 
 /*
+ * Get actual string length after processing escape sequences
+ */
+static size_t actual_string_len(const char *s) {
+    size_t src_len = strlen(s);
+    size_t actual_len = 0;
+    for (size_t j = 0; j < src_len; j++) {
+        if (s[j] == '\\' && j + 1 < src_len) {
+            j++;  // Skip escape sequence, counts as 1 char
+        }
+        actual_len++;
+    }
+    return actual_len;
+}
+
+/*
  * Get next temp register
  */
 static int next_temp(CodeGen *cg) {
@@ -440,6 +455,106 @@ static int codegen_expr(CodeGen *cg, ASTNode *node) {
                 }
             }
 
+            // HTTP functions
+            if (strcmp(node->data.call.module, "http") == 0) {
+                if (node->data.call.args.count > 0) {
+                    // Get URL argument (must be a string literal)
+                    ASTNode *url_node = node->data.call.args.nodes[0];
+
+                    if (strcmp(node->data.call.func, "get") == 0) {
+                        // Use string counter (same as out statement)
+                        if (url_node->type == NODE_STR) {
+                            int str_idx = cg->string_counter++;
+
+                            size_t len = actual_string_len(url_node->data.str.value) + 1;
+                            int url_ptr = next_temp(cg);
+                            fprintf(cg->out, "  %%t%d = getelementptr [%zu x i8], [%zu x i8]* @.str%d, i32 0, i32 0\n",
+                                    url_ptr, len, len, str_idx);
+
+                            // Call http_get
+                            int response_ptr = next_temp(cg);
+                            fprintf(cg->out, "  %%t%d = call i8* @nerd_http_get(i8* %%t%d)\n", response_ptr, url_ptr);
+
+                            // Print response if not null
+                            int is_null = next_temp(cg);
+                            fprintf(cg->out, "  %%t%d = icmp eq i8* %%t%d, null\n", is_null, response_ptr);
+
+                            int then_label = next_label(cg);
+                            int else_label = next_label(cg);
+                            int end_label = next_label(cg);
+
+                            fprintf(cg->out, "  br i1 %%t%d, label %%http_err%d, label %%http_ok%d\n",
+                                    is_null, then_label, else_label);
+
+                            // Error case
+                            fprintf(cg->out, "http_err%d:\n", then_label);
+                            fprintf(cg->out, "  br label %%http_end%d\n", end_label);
+
+                            // Success case - print response
+                            fprintf(cg->out, "http_ok%d:\n", else_label);
+                            fprintf(cg->out, "  call i32 (i8*, ...) @printf(i8* getelementptr ([4 x i8], [4 x i8]* @.fmt_str, i32 0, i32 0), i8* %%t%d)\n", response_ptr);
+                            fprintf(cg->out, "  call void @nerd_http_free(i8* %%t%d)\n", response_ptr);
+                            fprintf(cg->out, "  br label %%http_end%d\n", end_label);
+
+                            fprintf(cg->out, "http_end%d:\n", end_label);
+                        }
+
+                        fprintf(cg->out, "  %%t%d = fadd double 0.0, 0.0\n", result_reg);
+                        return result_reg;
+                    }
+
+                    // HTTP POST
+                    if (strcmp(node->data.call.func, "post") == 0 && node->data.call.args.count >= 2) {
+                        ASTNode *body_node = node->data.call.args.nodes[1];
+
+                        if (url_node->type == NODE_STR && body_node->type == NODE_STR) {
+                            int url_idx = cg->string_counter++;
+                            int body_idx = cg->string_counter++;
+
+                            size_t url_len = actual_string_len(url_node->data.str.value) + 1;
+                            size_t body_len = actual_string_len(body_node->data.str.value) + 1;
+
+                            int url_ptr = next_temp(cg);
+                            fprintf(cg->out, "  %%t%d = getelementptr [%zu x i8], [%zu x i8]* @.str%d, i32 0, i32 0\n",
+                                    url_ptr, url_len, url_len, url_idx);
+
+                            int body_ptr = next_temp(cg);
+                            fprintf(cg->out, "  %%t%d = getelementptr [%zu x i8], [%zu x i8]* @.str%d, i32 0, i32 0\n",
+                                    body_ptr, body_len, body_len, body_idx);
+
+                            // Call http_post
+                            int response_ptr = next_temp(cg);
+                            fprintf(cg->out, "  %%t%d = call i8* @nerd_http_post(i8* %%t%d, i8* %%t%d)\n",
+                                    response_ptr, url_ptr, body_ptr);
+
+                            // Print response if not null
+                            int is_null = next_temp(cg);
+                            fprintf(cg->out, "  %%t%d = icmp eq i8* %%t%d, null\n", is_null, response_ptr);
+
+                            int then_label = next_label(cg);
+                            int else_label = next_label(cg);
+                            int end_label = next_label(cg);
+
+                            fprintf(cg->out, "  br i1 %%t%d, label %%http_err%d, label %%http_ok%d\n",
+                                    is_null, then_label, else_label);
+
+                            fprintf(cg->out, "http_err%d:\n", then_label);
+                            fprintf(cg->out, "  br label %%http_end%d\n", end_label);
+
+                            fprintf(cg->out, "http_ok%d:\n", else_label);
+                            fprintf(cg->out, "  call i32 (i8*, ...) @printf(i8* getelementptr ([4 x i8], [4 x i8]* @.fmt_str, i32 0, i32 0), i8* %%t%d)\n", response_ptr);
+                            fprintf(cg->out, "  call void @nerd_http_free(i8* %%t%d)\n", response_ptr);
+                            fprintf(cg->out, "  br label %%http_end%d\n", end_label);
+
+                            fprintf(cg->out, "http_end%d:\n", end_label);
+                        }
+
+                        fprintf(cg->out, "  %%t%d = fadd double 0.0, 0.0\n", result_reg);
+                        return result_reg;
+                    }
+                }
+            }
+
             // Default: return 0 for unimplemented calls
             fprintf(cg->out, "  %%t%d = fadd double 0.0, 0.0\n", result_reg);
             return result_reg;
@@ -683,7 +798,7 @@ static void codegen_stmt(CodeGen *cg, ASTNode *node, int *result_reg) {
             if (val->type == NODE_STR) {
                 // Output string literal - find its index in pre-collected strings
                 int str_id = cg->string_counter++;
-                size_t len = strlen(val->data.str.value);
+                size_t len = actual_string_len(val->data.str.value);
 
                 // Get string pointer and call printf
                 int ptr_reg = next_temp(cg);
@@ -790,6 +905,12 @@ bool codegen_llvm(NerdContext *ctx, const char *output_path) {
     fprintf(out, "declare i32 @printf(i8*, ...)\n");
     fprintf(out, "\n");
 
+    // HTTP runtime declarations
+    fprintf(out, "declare i8* @nerd_http_get(i8*)\n");
+    fprintf(out, "declare i8* @nerd_http_post(i8*, i8*)\n");
+    fprintf(out, "declare void @nerd_http_free(i8*)\n");
+    fprintf(out, "\n");
+
     // Format strings for output
     fprintf(out, "@.fmt_num = private constant [4 x i8] c\"%%g\\0A\\00\"\n");
     fprintf(out, "@.fmt_str = private constant [4 x i8] c\"%%s\\0A\\00\"\n");
@@ -803,12 +924,41 @@ bool codegen_llvm(NerdContext *ctx, const char *output_path) {
     // Output string literal declarations
     for (size_t i = 0; i < cg->string_count; i++) {
         const char *s = cg->string_literals[i];
-        size_t len = strlen(s);
-        fprintf(out, "@.str%zu = private constant [%zu x i8] c\"", i, len + 1);
-        for (size_t j = 0; j < len; j++) {
+        size_t src_len = strlen(s);
+
+        // First pass: count actual length after processing escapes
+        size_t actual_len = 0;
+        for (size_t j = 0; j < src_len; j++) {
+            if (s[j] == '\\' && j + 1 < src_len) {
+                j++;  // Skip escape sequence, counts as 1 char
+            }
+            actual_len++;
+        }
+
+        fprintf(out, "@.str%zu = private constant [%zu x i8] c\"", i, actual_len + 1);
+        for (size_t j = 0; j < src_len; j++) {
             char c = s[j];
-            if (c == '\\' || c == '"') {
-                fprintf(out, "\\%02X", (unsigned char)c);
+            if (c == '\\' && j + 1 < src_len) {
+                // Handle escape sequences
+                char next = s[j + 1];
+                if (next == '"') {
+                    fprintf(out, "\\22");  // Quote
+                    j++;
+                } else if (next == '\\') {
+                    fprintf(out, "\\5C");  // Backslash
+                    j++;
+                } else if (next == 'n') {
+                    fprintf(out, "\\0A");  // Newline
+                    j++;
+                } else if (next == 't') {
+                    fprintf(out, "\\09");  // Tab
+                    j++;
+                } else {
+                    // Unknown escape, output as-is
+                    fprintf(out, "\\5C");
+                }
+            } else if (c == '"') {
+                fprintf(out, "\\22");
             } else if (c >= 32 && c < 127) {
                 fputc(c, out);
             } else {
