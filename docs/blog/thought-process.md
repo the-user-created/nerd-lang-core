@@ -479,8 +479,6 @@ Just don't try to write it yourself.
 
 ## Try It Yourself
 
-The NERD specification is at: [spec/NERD-SPEC.md](../../spec/NERD-SPEC.md)
-
 The bootstrap compiler is working. It compiles NERD to native binaries via LLVM. Built from scratch in C, no dependencies.
 
 ```bash
