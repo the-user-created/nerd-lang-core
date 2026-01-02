@@ -22,11 +22,20 @@ typedef enum {
     TOK_RET,        // ret - return
     TOK_TYPE,       // type - type definition
     TOK_IF,         // if - conditional
+    TOK_ELSE,       // else - else branch
     TOK_OR,         // or - union separator / logical or
     TOK_OK,         // ok - success variant
     TOK_ERR,        // err - error variant
     TOK_LET,        // let - variable binding
     TOK_CALL,       // call - function call
+    TOK_OUT,        // out - output/print
+    TOK_DONE,       // done - block terminator
+    TOK_REPEAT,     // repeat - loop start
+    TOK_AS,         // as - loop variable binding
+    TOK_WHILE,      // while - conditional loop
+    TOK_NEG,        // neg - negation
+    TOK_INC,        // inc - increment
+    TOK_DEC,        // dec - decrement
 
     // Types
     TOK_NUM,        // num - f64
@@ -124,6 +133,11 @@ typedef enum {
     NODE_IF,
     NODE_LET,
     NODE_EXPR_STMT,
+    NODE_OUT,
+    NODE_REPEAT,
+    NODE_WHILE,
+    NODE_INC,
+    NODE_DEC,
     NODE_BINOP,
     NODE_UNARYOP,
     NODE_CALL,
@@ -196,7 +210,38 @@ struct ASTNode {
         struct {
             ASTNode *condition;
             ASTNode *then_stmt;
+            ASTNode *else_stmt;     // NULL if no else branch
         } if_stmt;
+
+        // Out statement (output/print)
+        struct {
+            ASTNode *value;
+        } out;
+
+        // Repeat loop (repeat n times [as i] ... done)
+        struct {
+            ASTNode *count;         // expression for iteration count
+            char *var_name;         // optional "as i" variable (NULL if not present)
+            ASTList body;           // loop body
+        } repeat;
+
+        // While loop (while cond ... done)
+        struct {
+            ASTNode *condition;     // loop condition
+            ASTList body;           // loop body
+        } while_loop;
+
+        // Increment statement (inc var [amount])
+        struct {
+            char *var_name;
+            ASTNode *amount;        // NULL means increment by 1
+        } inc;
+
+        // Decrement statement (dec var [amount])
+        struct {
+            char *var_name;
+            ASTNode *amount;        // NULL means decrement by 1
+        } dec;
 
         // Let binding
         struct {

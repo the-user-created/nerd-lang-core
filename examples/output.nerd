@@ -1,0 +1,6 @@
+-- Output examples in NERD
+
+fn main
+out 42
+out "hello world"
+out five plus three

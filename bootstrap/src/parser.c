@@ -52,6 +52,27 @@ void ast_free(ASTNode *node) {
         case NODE_IF:
             ast_free(node->data.if_stmt.condition);
             ast_free(node->data.if_stmt.then_stmt);
+            ast_free(node->data.if_stmt.else_stmt);
+            break;
+        case NODE_OUT:
+            ast_free(node->data.out.value);
+            break;
+        case NODE_REPEAT:
+            ast_free(node->data.repeat.count);
+            free(node->data.repeat.var_name);
+            ast_list_free(&node->data.repeat.body);
+            break;
+        case NODE_WHILE:
+            ast_free(node->data.while_loop.condition);
+            ast_list_free(&node->data.while_loop.body);
+            break;
+        case NODE_INC:
+            free(node->data.inc.var_name);
+            ast_free(node->data.inc.amount);
+            break;
+        case NODE_DEC:
+            free(node->data.dec.var_name);
+            ast_free(node->data.dec.amount);
             break;
         case NODE_LET:
             free(node->data.let.name);
@@ -212,7 +233,9 @@ static bool is_end_of_expr(Parser *parser) {
            t == TOK_NEQ || t == TOK_LT || t == TOK_GT ||
            t == TOK_LTE || t == TOK_GTE || t == TOK_AND ||
            t == TOK_OR || t == TOK_RET || t == TOK_LET ||
-           t == TOK_IF || t == TOK_CALL;
+           t == TOK_IF || t == TOK_ELSE || t == TOK_CALL ||
+           t == TOK_OUT || t == TOK_DONE || t == TOK_REPEAT ||
+           t == TOK_TIMES || t == TOK_AS || t == TOK_WHILE;
 }
 
 /*
@@ -271,6 +294,7 @@ static int positional_index(TokenType type) {
 static ASTNode *parse_expr(Parser *parser);
 static ASTNode *parse_stmt(Parser *parser);
 static ASTNode *parse_inline_stmt(Parser *parser);
+static ASTNode *parse_unary(Parser *parser);
 
 /*
  * Parse primary expression
@@ -356,7 +380,7 @@ static ASTNode *parse_call(Parser *parser) {
 
         // Parse arguments until end of expression context
         while (!is_end_of_expr(parser)) {
-            ASTNode *arg = parse_primary(parser);
+            ASTNode *arg = parse_unary(parser);  // Allow unary ops (neg, not)
             if (!arg) {
                 ast_free(node);
                 return NULL;
@@ -380,7 +404,7 @@ static ASTNode *parse_call(Parser *parser) {
 
         // Parse arguments until end of expression context
         while (!is_end_of_expr(parser)) {
-            ASTNode *arg = parse_primary(parser);
+            ASTNode *arg = parse_unary(parser);  // Allow unary ops (neg, not)
             if (!arg) {
                 ast_free(node);
                 return NULL;
@@ -406,6 +430,17 @@ static ASTNode *parse_unary(Parser *parser) {
 
         ASTNode *node = ast_create(NODE_UNARYOP, line);
         node->data.unaryop.op = nerd_strdup("not");
+        node->data.unaryop.operand = operand;
+        return node;
+    }
+
+    // neg x -> negate x
+    if (parser_match(parser, TOK_NEG)) {
+        ASTNode *operand = parse_unary(parser);
+        if (!operand) return NULL;
+
+        ASTNode *node = ast_create(NODE_UNARYOP, line);
+        node->data.unaryop.op = nerd_strdup("neg");
         node->data.unaryop.operand = operand;
         return node;
     }
@@ -584,6 +619,17 @@ static ASTNode *parse_inline_stmt(Parser *parser) {
         return node;
     }
 
+    // Out statement
+    if (parser_match(parser, TOK_OUT)) {
+        ASTNode *node = ast_create(NODE_OUT, line);
+        node->data.out.value = parse_expr(parser);
+        if (!node->data.out.value) {
+            ast_free(node);
+            return NULL;
+        }
+        return node;
+    }
+
     // Let binding
     if (parser_match(parser, TOK_LET)) {
         Token *name_tok = parser_expect(parser, TOK_IDENT, "Expected variable name");
@@ -636,22 +682,169 @@ static ASTNode *parse_stmt(Parser *parser) {
         return node;
     }
 
+    // Out statement
+    if (parser_match(parser, TOK_OUT)) {
+        ASTNode *node = ast_create(NODE_OUT, line);
+        node->data.out.value = parse_expr(parser);
+        if (!node->data.out.value) {
+            ast_free(node);
+            return NULL;
+        }
+        parser_match(parser, TOK_NEWLINE);
+        return node;
+    }
+
+    // Inc statement: inc var [amount]
+    if (parser_match(parser, TOK_INC)) {
+        Token *var_tok = parser_expect(parser, TOK_IDENT, "Expected variable name after 'inc'");
+        if (!var_tok) return NULL;
+
+        ASTNode *node = ast_create(NODE_INC, line);
+        node->data.inc.var_name = nerd_strdup(var_tok->value);
+        node->data.inc.amount = NULL;
+
+        // Optional amount
+        if (!parser_at_end_of_line(parser)) {
+            node->data.inc.amount = parse_expr(parser);
+        }
+
+        parser_match(parser, TOK_NEWLINE);
+        return node;
+    }
+
+    // Dec statement: dec var [amount]
+    if (parser_match(parser, TOK_DEC)) {
+        Token *var_tok = parser_expect(parser, TOK_IDENT, "Expected variable name after 'dec'");
+        if (!var_tok) return NULL;
+
+        ASTNode *node = ast_create(NODE_DEC, line);
+        node->data.dec.var_name = nerd_strdup(var_tok->value);
+        node->data.dec.amount = NULL;
+
+        // Optional amount
+        if (!parser_at_end_of_line(parser)) {
+            node->data.dec.amount = parse_expr(parser);
+        }
+
+        parser_match(parser, TOK_NEWLINE);
+        return node;
+    }
+
     // If statement
     if (parser_match(parser, TOK_IF)) {
         ASTNode *condition = parse_comparison(parser);
         if (!condition) return NULL;
 
-        ASTNode *then_stmt = parse_inline_stmt(parser);
-        if (!then_stmt) {
-            ast_free(condition);
-            return NULL;
-        }
-
         ASTNode *node = ast_create(NODE_IF, line);
         node->data.if_stmt.condition = condition;
-        node->data.if_stmt.then_stmt = then_stmt;
+        node->data.if_stmt.then_stmt = NULL;
+        node->data.if_stmt.else_stmt = NULL;
 
-        parser_match(parser, TOK_NEWLINE);
+        // Check if this is a multiline if (newline after condition)
+        if (parser_check(parser, TOK_NEWLINE)) {
+            // Multiline if block: if cond \n stmt* \n [else \n stmt*] done
+            parser_match(parser, TOK_NEWLINE);
+            parser_skip_newlines(parser);
+
+            // Create a block node to hold multiple statements (reuse program node)
+            ASTNode *then_block = ast_create(NODE_PROGRAM, line);
+            ast_list_init(&then_block->data.program.functions);  // Reuse as statement list
+
+            // Parse then statements until else or done
+            while (!parser_at_end(parser) && 
+                   !parser_check(parser, TOK_ELSE) && 
+                   !parser_check(parser, TOK_DONE)) {
+                if (parser_match(parser, TOK_NEWLINE)) continue;
+                ASTNode *stmt = parse_stmt(parser);
+                if (!stmt) {
+                    ast_free(node);
+                    ast_free(then_block);
+                    return NULL;
+                }
+                ast_list_push(&then_block->data.program.functions, stmt);
+                parser_skip_newlines(parser);
+            }
+
+            // For single statement, unwrap the block
+            if (then_block->data.program.functions.count == 1) {
+                node->data.if_stmt.then_stmt = then_block->data.program.functions.nodes[0];
+                then_block->data.program.functions.nodes[0] = NULL;
+                then_block->data.program.functions.count = 0;
+                ast_free(then_block);
+            } else {
+                // Multiple statements - wrap in expression statement for now
+                // TODO: proper block support
+                if (then_block->data.program.functions.count > 0) {
+                    node->data.if_stmt.then_stmt = then_block->data.program.functions.nodes[0];
+                }
+                ast_free(then_block);
+            }
+
+            // Check for else
+            if (parser_match(parser, TOK_ELSE)) {
+                parser_match(parser, TOK_NEWLINE);
+                parser_skip_newlines(parser);
+
+                // Check if else if
+                if (parser_check(parser, TOK_IF)) {
+                    node->data.if_stmt.else_stmt = parse_stmt(parser);
+                } else {
+                    // Parse else statements until done
+                    ASTNode *else_block = ast_create(NODE_PROGRAM, line);
+                    ast_list_init(&else_block->data.program.functions);
+
+                    while (!parser_at_end(parser) && !parser_check(parser, TOK_DONE)) {
+                        if (parser_match(parser, TOK_NEWLINE)) continue;
+                        ASTNode *stmt = parse_stmt(parser);
+                        if (!stmt) {
+                            ast_free(node);
+                            ast_free(else_block);
+                            return NULL;
+                        }
+                        ast_list_push(&else_block->data.program.functions, stmt);
+                        parser_skip_newlines(parser);
+                    }
+
+                    if (else_block->data.program.functions.count == 1) {
+                        node->data.if_stmt.else_stmt = else_block->data.program.functions.nodes[0];
+                        else_block->data.program.functions.nodes[0] = NULL;
+                        else_block->data.program.functions.count = 0;
+                        ast_free(else_block);
+                    } else if (else_block->data.program.functions.count > 0) {
+                        node->data.if_stmt.else_stmt = else_block->data.program.functions.nodes[0];
+                        ast_free(else_block);
+                    } else {
+                        ast_free(else_block);
+                    }
+                }
+            }
+
+            // Expect done
+            if (!parser_check(parser, TOK_IF)) {  // else if doesn't need done
+                parser_expect(parser, TOK_DONE, "Expected 'done' to end if block");
+                parser_match(parser, TOK_NEWLINE);
+            }
+        } else {
+            // Inline if: if cond stmt [else stmt]
+            node->data.if_stmt.then_stmt = parse_inline_stmt(parser);
+            if (!node->data.if_stmt.then_stmt) {
+                ast_free(node);
+                return NULL;
+            }
+
+            // Check for else branch (on same line)
+            if (parser_match(parser, TOK_ELSE)) {
+                if (parser_check(parser, TOK_IF)) {
+                    node->data.if_stmt.else_stmt = parse_stmt(parser);
+                } else {
+                    node->data.if_stmt.else_stmt = parse_inline_stmt(parser);
+                    parser_match(parser, TOK_NEWLINE);
+                }
+            } else {
+                parser_match(parser, TOK_NEWLINE);
+            }
+        }
+
         return node;
     }
 
@@ -669,6 +862,92 @@ static ASTNode *parse_stmt(Parser *parser) {
         }
 
         parser_match(parser, TOK_NEWLINE);
+        return node;
+    }
+
+    // Repeat loop: repeat <n> times [as <var>] ... done
+    if (parser_match(parser, TOK_REPEAT)) {
+        // Parse count as a simple value (not full expression) to avoid 'times' ambiguity
+        ASTNode *count = parse_primary(parser);
+        if (!count) return NULL;
+
+        // Expect 'times' keyword
+        if (!parser_expect(parser, TOK_TIMES, "Expected 'times' after repeat count")) {
+            ast_free(count);
+            return NULL;
+        }
+
+        ASTNode *node = ast_create(NODE_REPEAT, line);
+        node->data.repeat.count = count;
+        node->data.repeat.var_name = NULL;
+        ast_list_init(&node->data.repeat.body);
+
+        // Optional 'as <var>'
+        if (parser_match(parser, TOK_AS)) {
+            Token *var_tok = parser_expect(parser, TOK_IDENT, "Expected variable name after 'as'");
+            if (!var_tok) {
+                ast_free(node);
+                return NULL;
+            }
+            node->data.repeat.var_name = nerd_strdup(var_tok->value);
+        }
+
+        parser_match(parser, TOK_NEWLINE);
+        parser_skip_newlines(parser);
+
+        // Parse body until 'done'
+        while (!parser_at_end(parser) && !parser_check(parser, TOK_DONE)) {
+            if (parser_match(parser, TOK_NEWLINE)) continue;
+
+            ASTNode *stmt = parse_stmt(parser);
+            if (!stmt) {
+                ast_free(node);
+                return NULL;
+            }
+            ast_list_push(&node->data.repeat.body, stmt);
+            parser_skip_newlines(parser);
+        }
+
+        if (!parser_expect(parser, TOK_DONE, "Expected 'done' to end repeat block")) {
+            ast_free(node);
+            return NULL;
+        }
+        parser_match(parser, TOK_NEWLINE);
+
+        return node;
+    }
+
+    // While loop: while <cond> ... done
+    if (parser_match(parser, TOK_WHILE)) {
+        ASTNode *condition = parse_comparison(parser);
+        if (!condition) return NULL;
+
+        ASTNode *node = ast_create(NODE_WHILE, line);
+        node->data.while_loop.condition = condition;
+        ast_list_init(&node->data.while_loop.body);
+
+        parser_match(parser, TOK_NEWLINE);
+        parser_skip_newlines(parser);
+
+        // Parse body until 'done'
+        while (!parser_at_end(parser) && !parser_check(parser, TOK_DONE)) {
+            if (parser_match(parser, TOK_NEWLINE)) continue;
+
+            ASTNode *stmt = parse_stmt(parser);
+            if (!stmt) {
+                ast_free(node);
+                return NULL;
+            }
+            ast_list_push(&node->data.while_loop.body, stmt);
+            parser_skip_newlines(parser);
+        }
+
+        if (!parser_expect(parser, TOK_DONE, "Expected 'done' to end while block")) {
+            ast_free(node);
+            return NULL;
+        }
+        parser_match(parser, TOK_NEWLINE);
+
         return node;
     }
 

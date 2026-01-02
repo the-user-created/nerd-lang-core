@@ -1,0 +1,27 @@
+-- Loops in NERD
+
+fn countdown n
+repeat n times as i
+  out n minus i plus one
+done
+
+fn sumto n
+let total zero
+repeat n times as i
+  inc total i
+done
+ret total
+
+fn factorial n
+let result one
+let x n
+while x gt one
+  let result result times x
+  dec x
+done
+ret result
+
+fn main
+call countdown five
+out call sumto ten
+out call factorial five

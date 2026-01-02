@@ -54,11 +54,20 @@ static const char *token_name(TokenType type) {
         case TOK_RET: return "RET";
         case TOK_TYPE: return "TYPE";
         case TOK_IF: return "IF";
+        case TOK_ELSE: return "ELSE";
         case TOK_OR: return "OR";
         case TOK_OK: return "OK";
         case TOK_ERR: return "ERR";
         case TOK_LET: return "LET";
         case TOK_CALL: return "CALL";
+        case TOK_OUT: return "OUT";
+        case TOK_DONE: return "DONE";
+        case TOK_REPEAT: return "REPEAT";
+        case TOK_AS: return "AS";
+        case TOK_WHILE: return "WHILE";
+        case TOK_NEG: return "NEG";
+        case TOK_INC: return "INC";
+        case TOK_DEC: return "DEC";
         case TOK_NUM: return "NUM";
         case TOK_INT: return "INT";
         case TOK_STR: return "STR";
@@ -168,6 +177,35 @@ static void print_ast(ASTNode *node, int indent) {
         case NODE_EXPR_STMT:
             printf("ExprStmt\n");
             print_ast(node->data.expr_stmt.expr, indent + 1);
+            break;
+
+        case NODE_OUT:
+            printf("Out\n");
+            print_ast(node->data.out.value, indent + 1);
+            break;
+
+        case NODE_REPEAT:
+            printf("Repeat %s\n", node->data.repeat.var_name ? node->data.repeat.var_name : "(no var)");
+            for (int i = 0; i < indent + 1; i++) printf("  ");
+            printf("Count:\n");
+            print_ast(node->data.repeat.count, indent + 2);
+            for (int i = 0; i < indent + 1; i++) printf("  ");
+            printf("Body:\n");
+            for (size_t i = 0; i < node->data.repeat.body.count; i++) {
+                print_ast(node->data.repeat.body.nodes[i], indent + 2);
+            }
+            break;
+
+        case NODE_WHILE:
+            printf("While\n");
+            for (int i = 0; i < indent + 1; i++) printf("  ");
+            printf("Condition:\n");
+            print_ast(node->data.while_loop.condition, indent + 2);
+            for (int i = 0; i < indent + 1; i++) printf("  ");
+            printf("Body:\n");
+            for (size_t i = 0; i < node->data.while_loop.body.count; i++) {
+                print_ast(node->data.while_loop.body.nodes[i], indent + 2);
+            }
             break;
 
         case NODE_BINOP:

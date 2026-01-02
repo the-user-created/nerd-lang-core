@@ -14,6 +14,7 @@ typedef struct {
     FILE *out;
     int temp_counter;
     int label_counter;
+    int string_counter;
 
     // Current function context
     ASTNode *current_func;
@@ -25,6 +26,11 @@ typedef struct {
     int *local_regs;
     size_t local_count;
     size_t local_capacity;
+
+    // String literals (deferred output)
+    char **string_literals;
+    size_t string_count;
+    size_t string_capacity;
 } CodeGen;
 
 /*
@@ -37,9 +43,13 @@ static CodeGen *codegen_create(FILE *out) {
     cg->out = out;
     cg->temp_counter = 0;
     cg->label_counter = 0;
+    cg->string_counter = 0;
     cg->local_capacity = 16;
     cg->local_names = malloc(sizeof(char*) * cg->local_capacity);
     cg->local_regs = malloc(sizeof(int) * cg->local_capacity);
+    cg->string_capacity = 16;
+    cg->string_literals = malloc(sizeof(char*) * cg->string_capacity);
+    cg->string_count = 0;
 
     return cg;
 }
@@ -51,6 +61,10 @@ static void codegen_free(CodeGen *cg) {
     }
     free(cg->local_names);
     free(cg->local_regs);
+    for (size_t i = 0; i < cg->string_count; i++) {
+        free(cg->string_literals[i]);
+    }
+    free(cg->string_literals);
     free(cg);
 }
 
@@ -124,6 +138,85 @@ static int codegen_expr(CodeGen *cg, ASTNode *node);
 static void codegen_stmt(CodeGen *cg, ASTNode *node, int *result_reg);
 
 /*
+ * Collect string literals from AST (recursive)
+ */
+static void collect_strings_expr(CodeGen *cg, ASTNode *node);
+static void collect_strings_stmt(CodeGen *cg, ASTNode *node);
+
+static void collect_strings_expr(CodeGen *cg, ASTNode *node) {
+    if (!node) return;
+
+    if (node->type == NODE_STR) {
+        // Add string to collection
+        if (cg->string_count >= cg->string_capacity) {
+            cg->string_capacity *= 2;
+            cg->string_literals = realloc(cg->string_literals,
+                sizeof(char*) * cg->string_capacity);
+        }
+        cg->string_literals[cg->string_count++] = nerd_strdup(node->data.str.value);
+    } else if (node->type == NODE_BINOP) {
+        collect_strings_expr(cg, node->data.binop.left);
+        collect_strings_expr(cg, node->data.binop.right);
+    } else if (node->type == NODE_UNARYOP) {
+        collect_strings_expr(cg, node->data.unaryop.operand);
+    } else if (node->type == NODE_CALL) {
+        for (size_t i = 0; i < node->data.call.args.count; i++) {
+            collect_strings_expr(cg, node->data.call.args.nodes[i]);
+        }
+    }
+}
+
+static void collect_strings_stmt(CodeGen *cg, ASTNode *node) {
+    if (!node) return;
+
+    switch (node->type) {
+        case NODE_OUT:
+            collect_strings_expr(cg, node->data.out.value);
+            break;
+        case NODE_RETURN:
+            collect_strings_expr(cg, node->data.ret.value);
+            break;
+        case NODE_IF:
+            collect_strings_expr(cg, node->data.if_stmt.condition);
+            collect_strings_stmt(cg, node->data.if_stmt.then_stmt);
+            collect_strings_stmt(cg, node->data.if_stmt.else_stmt);
+            break;
+        case NODE_LET:
+            collect_strings_expr(cg, node->data.let.value);
+            break;
+        case NODE_EXPR_STMT:
+            collect_strings_expr(cg, node->data.expr_stmt.expr);
+            break;
+        case NODE_REPEAT:
+            collect_strings_expr(cg, node->data.repeat.count);
+            for (size_t i = 0; i < node->data.repeat.body.count; i++) {
+                collect_strings_stmt(cg, node->data.repeat.body.nodes[i]);
+            }
+            break;
+        case NODE_WHILE:
+            collect_strings_expr(cg, node->data.while_loop.condition);
+            for (size_t i = 0; i < node->data.while_loop.body.count; i++) {
+                collect_strings_stmt(cg, node->data.while_loop.body.nodes[i]);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static void collect_strings_func(CodeGen *cg, ASTNode *func) {
+    for (size_t i = 0; i < func->data.func_def.body.count; i++) {
+        collect_strings_stmt(cg, func->data.func_def.body.nodes[i]);
+    }
+}
+
+static void collect_strings(CodeGen *cg, ASTNode *program) {
+    for (size_t i = 0; i < program->data.program.functions.count; i++) {
+        collect_strings_func(cg, program->data.program.functions.nodes[i]);
+    }
+}
+
+/*
  * Generate code for expression, returns register number
  */
 static int codegen_expr(CodeGen *cg, ASTNode *node) {
@@ -132,7 +225,13 @@ static int codegen_expr(CodeGen *cg, ASTNode *node) {
     switch (node->type) {
         case NODE_NUM: {
             int reg = next_temp(cg);
-            fprintf(cg->out, "  %%t%d = fadd double 0.0, %.17g\n", reg, node->data.num.value);
+            double val = node->data.num.value;
+            // Ensure the number has a decimal point for LLVM IR
+            if (val == (long long)val && val >= -1e15 && val <= 1e15) {
+                fprintf(cg->out, "  %%t%d = fadd double 0.0, %.1f\n", reg, val);
+            } else {
+                fprintf(cg->out, "  %%t%d = fadd double 0.0, %e\n", reg, val);
+            }
             return reg;
         }
 
@@ -256,6 +355,9 @@ static int codegen_expr(CodeGen *cg, ASTNode *node) {
                 int bool_reg = next_temp(cg);
                 fprintf(cg->out, "  %%t%d = fcmp oeq double %%t%d, 0.0\n", bool_reg, operand_reg);
                 fprintf(cg->out, "  %%t%d = uitofp i1 %%t%d to double\n", result_reg, bool_reg);
+            } else if (strcmp(node->data.unaryop.op, "neg") == 0) {
+                // Negate: 0 - x
+                fprintf(cg->out, "  %%t%d = fsub double 0.0, %%t%d\n", result_reg, operand_reg);
             }
 
             return result_reg;
@@ -370,20 +472,50 @@ static void codegen_stmt(CodeGen *cg, ASTNode *node, int *result_reg) {
 
             int bool_reg = next_temp(cg);
             int then_label = next_label(cg);
+            int else_label = next_label(cg);
             int end_label = next_label(cg);
 
             fprintf(cg->out, "  %%t%d = fcmp one double %%t%d, 0.0\n", bool_reg, cond_reg);
-            fprintf(cg->out, "  br i1 %%t%d, label %%then%d, label %%end%d\n", bool_reg, then_label, end_label);
 
-            fprintf(cg->out, "then%d:\n", then_label);
-            codegen_stmt(cg, node->data.if_stmt.then_stmt, result_reg);
+            if (node->data.if_stmt.else_stmt) {
+                // Has else branch
+                fprintf(cg->out, "  br i1 %%t%d, label %%then%d, label %%else%d\n", bool_reg, then_label, else_label);
 
-            // Only add branch if then block didn't return
-            if (node->data.if_stmt.then_stmt->type != NODE_RETURN) {
-                fprintf(cg->out, "  br label %%end%d\n", end_label);
+                // Then block
+                fprintf(cg->out, "then%d:\n", then_label);
+                codegen_stmt(cg, node->data.if_stmt.then_stmt, result_reg);
+                bool then_returns = (node->data.if_stmt.then_stmt->type == NODE_RETURN);
+                if (!then_returns) {
+                    fprintf(cg->out, "  br label %%end%d\n", end_label);
+                }
+
+                // Else block
+                fprintf(cg->out, "else%d:\n", else_label);
+                codegen_stmt(cg, node->data.if_stmt.else_stmt, result_reg);
+
+                // Check if else needs a branch to end
+                bool else_returns = (node->data.if_stmt.else_stmt->type == NODE_RETURN);
+
+                if (!else_returns) {
+                    // Always branch to end after else block (including after nested if)
+                    fprintf(cg->out, "  br label %%end%d\n", end_label);
+                }
+
+                // Always emit end label for if-else (needed for merging control flow)
+                fprintf(cg->out, "end%d:\n", end_label);
+            } else {
+                // No else branch
+                fprintf(cg->out, "  br i1 %%t%d, label %%then%d, label %%end%d\n", bool_reg, then_label, end_label);
+
+                fprintf(cg->out, "then%d:\n", then_label);
+                codegen_stmt(cg, node->data.if_stmt.then_stmt, result_reg);
+
+                if (node->data.if_stmt.then_stmt->type != NODE_RETURN) {
+                    fprintf(cg->out, "  br label %%end%d\n", end_label);
+                }
+
+                fprintf(cg->out, "end%d:\n", end_label);
             }
-
-            fprintf(cg->out, "end%d:\n", end_label);
             break;
         }
 
@@ -391,15 +523,182 @@ static void codegen_stmt(CodeGen *cg, ASTNode *node, int *result_reg) {
             int val_reg = codegen_expr(cg, node->data.let.value);
             if (val_reg < 0) return;
 
-            int local_id = (int)cg->local_count;
-            fprintf(cg->out, "  %%local%d = alloca double\n", local_id);
-            fprintf(cg->out, "  store double %%t%d, double* %%local%d\n", val_reg, local_id);
-            add_local(cg, node->data.let.name, local_id);
+            // Check if variable already exists (reassignment)
+            int existing = find_local(cg, node->data.let.name);
+            if (existing >= 0) {
+                // Update existing variable
+                fprintf(cg->out, "  store double %%t%d, double* %%local%d\n", val_reg, existing);
+            } else {
+                // Create new variable
+                int local_id = (int)cg->local_count;
+                fprintf(cg->out, "  %%local%d = alloca double\n", local_id);
+                fprintf(cg->out, "  store double %%t%d, double* %%local%d\n", val_reg, local_id);
+                add_local(cg, node->data.let.name, local_id);
+            }
             break;
         }
 
         case NODE_EXPR_STMT: {
             codegen_expr(cg, node->data.expr_stmt.expr);
+            break;
+        }
+
+        case NODE_REPEAT: {
+            // repeat n times [as i] ... done
+            // Generates: for (i = 1; i <= n; i++) { body }
+
+            int count_reg = codegen_expr(cg, node->data.repeat.count);
+            if (count_reg < 0) return;
+
+            int loop_start = next_label(cg);
+            int loop_body = next_label(cg);
+            int loop_end = next_label(cg);
+
+            // Allocate counter variable (starts at 1)
+            int counter_id = (int)cg->local_count;
+            fprintf(cg->out, "  %%local%d = alloca double\n", counter_id);
+            fprintf(cg->out, "  store double 1.0, double* %%local%d\n", counter_id);
+
+            // If there's an 'as' variable, set up the binding
+            if (node->data.repeat.var_name) {
+                add_local(cg, node->data.repeat.var_name, counter_id);
+            } else {
+                // Need to track the counter even without a name
+                cg->local_count++;
+            }
+
+            // Loop condition check
+            fprintf(cg->out, "  br label %%loop_start%d\n", loop_start);
+            fprintf(cg->out, "loop_start%d:\n", loop_start);
+
+            int counter_val = next_temp(cg);
+            fprintf(cg->out, "  %%t%d = load double, double* %%local%d\n", counter_val, counter_id);
+
+            int cmp_reg = next_temp(cg);
+            fprintf(cg->out, "  %%t%d = fcmp ole double %%t%d, %%t%d\n", cmp_reg, counter_val, count_reg);
+            fprintf(cg->out, "  br i1 %%t%d, label %%loop_body%d, label %%loop_end%d\n", cmp_reg, loop_body, loop_end);
+
+            // Loop body
+            fprintf(cg->out, "loop_body%d:\n", loop_body);
+            for (size_t i = 0; i < node->data.repeat.body.count; i++) {
+                codegen_stmt(cg, node->data.repeat.body.nodes[i], result_reg);
+            }
+
+            // Increment counter
+            int inc_load = next_temp(cg);
+            int inc_add = next_temp(cg);
+            fprintf(cg->out, "  %%t%d = load double, double* %%local%d\n", inc_load, counter_id);
+            fprintf(cg->out, "  %%t%d = fadd double %%t%d, 1.0\n", inc_add, inc_load);
+            fprintf(cg->out, "  store double %%t%d, double* %%local%d\n", inc_add, counter_id);
+            fprintf(cg->out, "  br label %%loop_start%d\n", loop_start);
+
+            // Loop end
+            fprintf(cg->out, "loop_end%d:\n", loop_end);
+            break;
+        }
+
+        case NODE_WHILE: {
+            // while cond ... done
+
+            int loop_start = next_label(cg);
+            int loop_body = next_label(cg);
+            int loop_end = next_label(cg);
+
+            // Loop condition check
+            fprintf(cg->out, "  br label %%while_start%d\n", loop_start);
+            fprintf(cg->out, "while_start%d:\n", loop_start);
+
+            int cond_reg = codegen_expr(cg, node->data.while_loop.condition);
+            if (cond_reg < 0) return;
+
+            int bool_reg = next_temp(cg);
+            fprintf(cg->out, "  %%t%d = fcmp one double %%t%d, 0.0\n", bool_reg, cond_reg);
+            fprintf(cg->out, "  br i1 %%t%d, label %%while_body%d, label %%while_end%d\n", bool_reg, loop_body, loop_end);
+
+            // Loop body
+            fprintf(cg->out, "while_body%d:\n", loop_body);
+            for (size_t i = 0; i < node->data.while_loop.body.count; i++) {
+                codegen_stmt(cg, node->data.while_loop.body.nodes[i], result_reg);
+            }
+            fprintf(cg->out, "  br label %%while_start%d\n", loop_start);
+
+            // Loop end
+            fprintf(cg->out, "while_end%d:\n", loop_end);
+            break;
+        }
+
+        case NODE_INC: {
+            // inc var [amount] - increment variable
+            int existing = find_local(cg, node->data.inc.var_name);
+            if (existing < 0) {
+                fprintf(stderr, "Error: Unknown variable '%s' in inc\n", node->data.inc.var_name);
+                return;
+            }
+
+            int load_reg = next_temp(cg);
+            fprintf(cg->out, "  %%t%d = load double, double* %%local%d\n", load_reg, existing);
+
+            int amount_reg;
+            if (node->data.inc.amount) {
+                amount_reg = codegen_expr(cg, node->data.inc.amount);
+            } else {
+                amount_reg = next_temp(cg);
+                fprintf(cg->out, "  %%t%d = fadd double 0.0, 1.0\n", amount_reg);
+            }
+
+            int result_reg = next_temp(cg);
+            fprintf(cg->out, "  %%t%d = fadd double %%t%d, %%t%d\n", result_reg, load_reg, amount_reg);
+            fprintf(cg->out, "  store double %%t%d, double* %%local%d\n", result_reg, existing);
+            break;
+        }
+
+        case NODE_DEC: {
+            // dec var [amount] - decrement variable
+            int existing = find_local(cg, node->data.dec.var_name);
+            if (existing < 0) {
+                fprintf(stderr, "Error: Unknown variable '%s' in dec\n", node->data.dec.var_name);
+                return;
+            }
+
+            int load_reg = next_temp(cg);
+            fprintf(cg->out, "  %%t%d = load double, double* %%local%d\n", load_reg, existing);
+
+            int amount_reg;
+            if (node->data.dec.amount) {
+                amount_reg = codegen_expr(cg, node->data.dec.amount);
+            } else {
+                amount_reg = next_temp(cg);
+                fprintf(cg->out, "  %%t%d = fadd double 0.0, 1.0\n", amount_reg);
+            }
+
+            int result_reg = next_temp(cg);
+            fprintf(cg->out, "  %%t%d = fsub double %%t%d, %%t%d\n", result_reg, load_reg, amount_reg);
+            fprintf(cg->out, "  store double %%t%d, double* %%local%d\n", result_reg, existing);
+            break;
+        }
+
+        case NODE_OUT: {
+            ASTNode *val = node->data.out.value;
+
+            if (val->type == NODE_STR) {
+                // Output string literal - find its index in pre-collected strings
+                int str_id = cg->string_counter++;
+                size_t len = strlen(val->data.str.value);
+
+                // Get string pointer and call printf
+                int ptr_reg = next_temp(cg);
+                fprintf(cg->out, "  %%t%d = getelementptr [%zu x i8], [%zu x i8]* @.str%d, i32 0, i32 0\n",
+                        ptr_reg, len + 1, len + 1, str_id);
+                fprintf(cg->out, "  call i32 (i8*, ...) @printf(i8* getelementptr ([4 x i8], [4 x i8]* @.fmt_str, i32 0, i32 0), i8* %%t%d)\n",
+                        ptr_reg);
+            } else {
+                // Output number
+                int val_reg = codegen_expr(cg, val);
+                if (val_reg >= 0) {
+                    fprintf(cg->out, "  call i32 (i8*, ...) @printf(i8* getelementptr ([4 x i8], [4 x i8]* @.fmt_num, i32 0, i32 0), double %%t%d)\n",
+                            val_reg);
+                }
+            }
             break;
         }
 
@@ -487,8 +786,42 @@ bool codegen_llvm(NerdContext *ctx, const char *output_path) {
     fprintf(out, "declare double @llvm.maxnum.f64(double, double)\n");
     fprintf(out, "\n");
 
-    // Generate functions
+    // Declare printf for output
+    fprintf(out, "declare i32 @printf(i8*, ...)\n");
+    fprintf(out, "\n");
+
+    // Format strings for output
+    fprintf(out, "@.fmt_num = private constant [4 x i8] c\"%%g\\0A\\00\"\n");
+    fprintf(out, "@.fmt_str = private constant [4 x i8] c\"%%s\\0A\\00\"\n");
+    fprintf(out, "@.fmt_int = private constant [6 x i8] c\"%%.0f\\0A\\00\"\n");
+    fprintf(out, "\n");
+
+    // Collect all string literals from AST
     ASTNode *program = ctx->ast;
+    collect_strings(cg, program);
+
+    // Output string literal declarations
+    for (size_t i = 0; i < cg->string_count; i++) {
+        const char *s = cg->string_literals[i];
+        size_t len = strlen(s);
+        fprintf(out, "@.str%zu = private constant [%zu x i8] c\"", i, len + 1);
+        for (size_t j = 0; j < len; j++) {
+            char c = s[j];
+            if (c == '\\' || c == '"') {
+                fprintf(out, "\\%02X", (unsigned char)c);
+            } else if (c >= 32 && c < 127) {
+                fputc(c, out);
+            } else {
+                fprintf(out, "\\%02X", (unsigned char)c);
+            }
+        }
+        fprintf(out, "\\00\"\n");
+    }
+    if (cg->string_count > 0) {
+        fprintf(out, "\n");
+    }
+
+    // Generate functions
     for (size_t i = 0; i < program->data.program.functions.count; i++) {
         codegen_func(cg, program->data.program.functions.nodes[i]);
     }

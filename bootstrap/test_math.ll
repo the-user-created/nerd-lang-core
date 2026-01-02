@@ -6,7 +6,7 @@
 @fmt_mul = private constant [16 x i8] c"mul(6, 7) = %g\0A\00"
 @fmt_div = private constant [17 x i8] c"div(20, 4) = %g\0A\00"
 
-declare i32 @printf(i8*, ...)
+; printf is declared in the nerd-generated code
 
 define i32 @main() {
 entry:

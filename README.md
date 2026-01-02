@@ -1,3 +1,7 @@
+> 🚧 **Early days.** This is a first step toward LLM-native programming - a language machines write, humans audit. Lots of unknowns ahead: the implementation might change completely, and the experiment itself might not work out. Not ready for real use yet. Ideas and contributions very welcome.
+>
+> If you're into transformers and token optimization, or you miss the days of writing C and assembly - this might be a fun playground.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/Nerd-Lang/nerd-lang-core/main/docs/site/images/nerd-dark.png" alt="NERD" width="400">
 </p>
@@ -48,41 +52,46 @@ No symbols. No braces. No semicolons. Just words.
 
 ## Examples
 
+**FizzBuzz** — the classic test, dense but readable:
+```
+fn fizzbuzz n
+repeat n times as i
+  if i mod 15 eq zero out "FizzBuzz" else if i mod three eq zero out "Fizz" else if i mod five eq zero out "Buzz" else out i
+done
+
+fn main
+call fizzbuzz 15
+```
+
+**Factorial** — loops and counters:
+```
+fn factorial n
+let result one
+let x n
+while x gt one
+  let result result times x
+  dec x
+done
+ret result
+```
+
 **Math operations:**
 ```
 fn add a b
 ret a plus b
 
-fn sub a b
-ret a minus b
-
-fn mul a b
-ret a times b
-
-fn div a b
-ret a over b
-```
-
-**Calculator with types:**
-```
-type result ok num or err str
-
-fn calc a b op
-if op eq zero ret ok a plus b
-if op eq one ret ok a minus b
-if op eq two ret ok a times b
-if op eq three ret ok a over b
-ret err "unknown operation"
+fn abs x
+if x lt zero ret neg x else ret x
 ```
 
 ## Token Efficiency
 
-| Language | Math (4 fn) | Calculator | Savings |
-|----------|-------------|------------|---------|
-| **NERD** | **32** | **55** | - |
-| JavaScript | 70 | 107 | 48-54% |
-| TypeScript | 96 | 135 | 59-67% |
-| Java | 77 | 273 | 58-80% |
+| Language | FizzBuzz | Math (4 fn) | Savings |
+|----------|----------|-------------|---------|
+| **NERD** | **49** | **32** | - |
+| JavaScript | 99 | 70 | 50-54% |
+| Python | 73 | 47 | 32-33% |
+| TypeScript | 126 | 96 | 61-67% |
 
 ## Quick Start (macOS Apple Silicon)
 
@@ -92,17 +101,17 @@ curl -L https://github.com/Nerd-Lang/nerd-lang-core/releases/latest/download/ner
 chmod +x nerd
 
 # Write a program
-echo 'fn add a b
-ret a plus b
+echo 'fn main
+out "Hello from NERD"
+out five plus three' > hello.nerd
 
-fn mul a b
-ret a times b' > math.nerd
-
-# Run it
-./nerd run math.nerd
+# Compile and run
+./nerd compile hello.nerd -o hello.ll
+clang -O2 hello.ll -o hello
+./hello
 # Output:
-# add = 8
-# mul = 15
+# Hello from NERD
+# 8
 ```
 
 ## Build from Source
@@ -121,29 +130,32 @@ Requires: C compiler and clang (`xcode-select --install` on macOS)
 ```bash
 cd bootstrap
 
-# Compile and run math example
-./nerd compile ../examples/math.nerd -o math.ll
-cat math.ll test_math.ll > combined.ll
-clang -O2 combined.ll -o math
-./math
-# Output:
-# add(5, 3) = 8
-# sub(10, 4) = 6
-# mul(6, 7) = 42
-# div(20, 4) = 5
+# FizzBuzz
+./nerd compile ../examples/fizzbuzz.nerd -o fizzbuzz.ll
+clang -O2 fizzbuzz.ll -o fizzbuzz
+./fizzbuzz
+
+# Factorial with loops
+./nerd compile ../examples/loops.nerd -o loops.ll
+clang -O2 loops.ll -o loops
+./loops
 ```
 
-## Standard Library
+## Language Features
 
-| Module | Purpose | Status |
-|--------|---------|--------|
-| `core` | Built-in operators (plus, minus, eq, etc.) | Done |
-| `math` | Numeric operations (abs, sqrt, pow, etc.) | Done |
-| `str` | String operations (len, concat, split, etc.) | Planned |
-| `list` | Collections (map, filter, reduce, etc.) | Planned |
-| `time` | Date/time handling | Planned |
-| `http` | HTTP client | Planned |
-| `json` | JSON encoding/decoding | Planned |
+| Feature | Syntax | Status |
+|---------|--------|--------|
+| Functions | `fn name args... ret value` | Done |
+| Variables | `let x value` | Done |
+| Math | `plus minus times over mod` | Done |
+| Comparison | `eq ne gt lt ge le` | Done |
+| Output | `out value` | Done |
+| Conditionals | `if cond stmt else stmt` | Done |
+| Loops | `repeat n times as i ... done` | Done |
+| While | `while cond ... done` | Done |
+| Negation | `neg x` | Done |
+| Counters | `inc x` / `dec x` | Done |
+| Stdlib | `math sqrt/pow/sin/cos/...` | Done |
 
 ## How It Works
 

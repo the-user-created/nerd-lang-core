@@ -7,7 +7,7 @@
 @fmt_double = private constant [16 x i8] c"double(8) = %g\0A\00"
 @fmt_hyp = private constant [23 x i8] c"hypotenuse(3, 4) = %g\0A\00"
 
-declare i32 @printf(i8*, ...)
+; printf is declared in the nerd-generated code
 
 define i32 @main() {
 entry:

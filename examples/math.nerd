@@ -1,3 +1,5 @@
+-- Basic math operations in NERD
+
 fn add a b
 ret a plus b
 
@@ -9,3 +11,9 @@ ret a times b
 
 fn div a b
 ret a over b
+
+fn main
+out call add five three
+out call sub ten four
+out call mul six seven
+out call div 15 three

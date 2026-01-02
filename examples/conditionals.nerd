@@ -1,0 +1,17 @@
+-- Conditionals in NERD
+
+fn sign x
+if x gt zero ret one else if x lt zero ret neg one else ret zero
+
+fn abs x
+if x lt zero ret neg x else ret x
+
+fn max a b
+if a gt b ret a else ret b
+
+fn main
+out call sign five
+out call sign neg three
+out call sign zero
+out call abs neg seven
+out call max three eight

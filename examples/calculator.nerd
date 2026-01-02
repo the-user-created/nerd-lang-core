@@ -1,8 +1,10 @@
-type result ok num or err str
+-- Calculator in NERD
 
 fn calc a b op
-if op eq zero ret ok a plus b
-if op eq one ret ok a minus b
-if op eq two ret ok a times b
-if op eq three ret ok a over b
-ret err "unknown operation"
+if op eq zero ret a plus b else if op eq one ret a minus b else if op eq two ret a times b else if op eq three ret a over b else ret zero
+
+fn main
+out call calc ten five zero
+out call calc ten five one
+out call calc ten five two
+out call calc ten five three
