@@ -1,0 +1,329 @@
+# NERD
+
+> NERD (No Effort Required, Done) is an LLM-native programming language - built for LLMs to write, not for human authorship. Humans observe and audit; machines generate. Agent-first by design.
+
+## Philosophy
+
+NERD is an experimental language exploring what programming looks like when AI writes most of the code.
+
+- **LLM-native**: Optimized for LLM tokenization. English words instead of symbols. Each word = 1 token.
+- **Not for human authorship**: Dense, terse, machine-optimized. Humans don't write it - they observe it.
+- **Human-observable**: Auditable and verifiable. Plain English words make it paradoxically readable.
+- **Agent-first**: Prioritizing agentic use cases - LLM calls, tool calls, orchestration.
+- **Native compilation**: Compiles to LLVM IR, then to native binaries via clang. No runtime.
+
+## The Experiment
+
+This is an early-stage experiment. The insight: tools are absorbing integration complexity (auth, retries, rate limiting) via MCP and similar protocols. What's left for agents is thin orchestration.
+
+NERD is exploring whether a purpose-built language for this new world makes sense. Maybe it does, maybe it doesn't - but it's worth trying.
+
+Contributions welcome: https://github.com/Nerd-Lang/nerd-lang-core
+
+## Language Specification
+
+### Types
+
+```
+num     - f64 (floating point)
+int     - i64 (integer)
+str     - string
+bool    - boolean
+void    - no value
+```
+
+### Keywords
+
+```
+fn      - function definition
+ret     - return value
+let     - variable binding
+if      - conditional
+else    - else branch
+call    - function call
+out     - print to stdout
+done    - end block (loops, multiline if)
+repeat  - counted loop
+times   - loop count keyword
+as      - loop variable binding
+while   - conditional loop
+inc     - increment
+dec     - decrement
+neg     - negate
+type    - type definition
+ok      - success result
+err     - error result
+```
+
+### Operators
+
+```
+plus    - addition (+)
+minus   - subtraction (-)
+times   - multiplication (*)
+over    - division (/)
+mod     - modulo (%)
+eq      - equals (==)
+neq     - not equals (!=)
+lt      - less than (<)
+gt      - greater than (>)
+lte     - less than or equal (<=)
+gte     - greater than or equal (>=)
+and     - logical and
+or      - logical or
+not     - logical not
+```
+
+### Number Words
+
+```
+zero one two three four five six seven eight nine ten
+```
+
+### Positional Parameters
+
+```
+first   - param 0
+second  - param 1
+third   - param 2
+fourth  - param 3
+```
+
+### Comments
+
+```
+-- this is a comment
+# this is also a comment
+```
+
+## Agent Capabilities
+
+### LLM Calls
+
+```
+llm claude "prompt"
+```
+
+Calls Claude API. Requires ANTHROPIC_API_KEY in environment or .env file.
+
+### HTTP Requests
+
+```
+http get "url"
+http post "url" "json body"
+```
+
+### MCP Tool Calls
+
+```
+mcp tools "url"
+mcp send "url" "tool_name" "json_args"
+```
+
+Discovers and calls remote MCP tools.
+
+## Syntax Examples
+
+### One-Line Agent
+
+```
+llm claude "What is Cloudflare Workers? One sentence."
+```
+
+### MCP Tool Discovery and Call
+
+```
+mcp tools "https://docs.mcp.cloudflare.com/mcp"
+mcp send "https://docs.mcp.cloudflare.com/mcp" "search_cloudflare_documentation" "{\"query\":\"Workers\"}"
+```
+
+### HTTP Requests
+
+```
+http get "https://httpbin.org/get"
+http post "https://httpbin.org/post" "{\"name\":\"nerd\"}"
+```
+
+### Function Definition
+
+```
+fn add a b
+ret a plus b
+```
+
+### Math Operations
+
+```
+fn add a b
+ret a plus b
+
+fn sub a b
+ret a minus b
+
+fn mul a b
+ret a times b
+
+fn div a b
+ret a over b
+```
+
+### Conditionals
+
+```
+if x gt zero out "positive" else out "not positive"
+```
+
+### Multiline Conditionals
+
+```
+if x gt zero
+  out "positive"
+else
+  out "not positive"
+done
+```
+
+### FizzBuzz
+
+```
+fn fizzbuzz n
+repeat n times as i
+  if i mod 15 eq zero out "FizzBuzz" else if i mod three eq zero out "Fizz" else if i mod five eq zero out "Buzz" else out i
+done
+
+fn main
+call fizzbuzz 15
+```
+
+### Counted Loop
+
+```
+repeat ten times as i
+  out i
+done
+```
+
+### While Loop
+
+```
+let x ten
+while x gt zero
+  out x
+  dec x
+done
+```
+
+### Factorial
+
+```
+fn factorial n
+let result one
+let x n
+while x gt one
+  let result result times x
+  dec x
+done
+ret result
+```
+
+### Function Calls
+
+```
+fn square x
+ret x times x
+
+fn main
+out call square five
+```
+
+### Result Types
+
+```
+type result ok num or err str
+
+fn calc a b op
+if op eq zero ret ok a plus b
+if op eq one ret ok a minus b
+ret err "unknown"
+```
+
+### Stdlib Math
+
+```
+ret math sqrt x
+ret math pow x two
+ret math sin x
+ret math cos x
+ret math abs x
+```
+
+## Compilation
+
+```
+NERD source (.nerd)
+    ↓
+  Lexer (tokenize English words)
+    ↓
+  Parser (build AST)
+    ↓
+  Codegen (generate LLVM IR)
+    ↓
+  clang (compile to native binary)
+```
+
+### Commands
+
+```
+nerd compile file.nerd -o output.ll    # Generate LLVM IR
+nerd run file.nerd                      # Compile and run
+nerd tokens file.nerd                   # Show tokens
+nerd parse file.nerd                    # Show AST
+```
+
+## Token Efficiency
+
+NERD achieves 50-70% fewer tokens than traditional languages for equivalent logic:
+
+| Language   | FizzBuzz | Math (4 fn) |
+|------------|----------|-------------|
+| NERD       | 49       | 32          |
+| JavaScript | 99       | 70          |
+| Python     | 73       | 47          |
+| TypeScript | 126      | 96          |
+
+## Documentation
+
+- [Home](https://www.nerd-lang.org): Overview
+- [Story](https://www.nerd-lang.org/about): Why NERD exists
+- [Agent-First](https://www.nerd-lang.org/agent-first): Why we're prioritizing agents
+- [Docs](https://www.nerd-lang.org/docs): Installation and basics
+- [Spec](https://www.nerd-lang.org/docs/spec): Language specification
+- [Roadmap](https://www.nerd-lang.org/docs/roadmap): What's next
+- [GitHub](https://github.com/Nerd-Lang/nerd-lang-core): Source code and examples
+
+## Examples Directory
+
+- [agent.nerd](https://github.com/Nerd-Lang/nerd-lang-core/blob/main/examples/agent.nerd): LLM call
+- [mcp_test.nerd](https://github.com/Nerd-Lang/nerd-lang-core/blob/main/examples/mcp_test.nerd): MCP tools
+- [http_test.nerd](https://github.com/Nerd-Lang/nerd-lang-core/blob/main/examples/http_test.nerd): HTTP requests
+- [fizzbuzz.nerd](https://github.com/Nerd-Lang/nerd-lang-core/blob/main/examples/fizzbuzz.nerd): Classic FizzBuzz
+- [loops.nerd](https://github.com/Nerd-Lang/nerd-lang-core/blob/main/examples/loops.nerd): Loops and counters
+- [math.nerd](https://github.com/Nerd-Lang/nerd-lang-core/blob/main/examples/math.nerd): Math operations
+- [functions.nerd](https://github.com/Nerd-Lang/nerd-lang-core/blob/main/examples/functions.nerd): Function composition
+
+## Quick Start
+
+```bash
+# Install (macOS Apple Silicon)
+curl -L https://github.com/Nerd-Lang/nerd-lang-core/releases/latest/download/nerd-darwin-arm64 -o nerd
+chmod +x nerd
+
+# Run an agent
+echo 'llm claude "Hello"' > hello.nerd
+./nerd run hello.nerd
+```
+
+## License
+
+Apache 2.0
+
